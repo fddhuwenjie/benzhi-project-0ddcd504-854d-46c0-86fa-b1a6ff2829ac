@@ -362,6 +362,13 @@ func (a *App) idempotent(key string, request interface{}) (*domain.DigitizationC
 	if json.Unmarshal(b, &saved) != nil {
 		return nil, false, domain.ErrIntegrity
 	}
+	currentDigest, err := digest(request)
+	if err != nil {
+		return nil, false, err
+	}
+	if saved.RequestDigest != currentDigest {
+		return nil, false, domain.Conflict("幂等键已绑定不同的业务载荷", nil)
+	}
 	return &saved.Case, true, nil
 }
 func (a *App) mutate(id string, rev int64, fn func(*domain.DigitizationCase) error, typ string) (*domain.DigitizationCase, error) {
