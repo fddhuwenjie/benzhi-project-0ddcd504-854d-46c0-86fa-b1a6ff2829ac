@@ -302,13 +302,22 @@ func randomCaseID() (string, error) {
 	return fmt.Sprintf("case-%x", b), nil
 }
 
+// stalePreview 检测缓存预检是否与当前个案状态脱节：任何变更都会同时推进
+// Revision 和审计链头摘要，因此两者之一发生变化即说明缓存条目过期。
+func (a *App) stalePreview(id string, cached domain.ManifestPreview, c *domain.DigitizationCase) bool {
+	return cached.AuditRevision != c.Revision || cached.AuditHeadDigest != a.Audit.Head(id)
+}
+
 func (a *App) PreviewManifest(id string) (domain.ManifestPreview, error) {
-	if cached, ok := a.manifestPreviews.Load(id); ok {
-		return cached.(domain.ManifestPreview), nil
-	}
 	c, err := a.Store.Get(id)
 	if err != nil {
 		return domain.ManifestPreview{}, err
+	}
+	// 命中缓存时仍需比对当前个案 revision 与审计链头，避免质量状态或审计
+	// 锚点更新后回传过期预检（如 CAPTURED 阶段首次预检被后续 QC_PASSED
+	// 覆盖但缓存未失效）。只有状态未发生变化时才复用既有结果。
+	if cached, ok := a.manifestPreviews.Load(id); ok && !a.stalePreview(id, cached.(domain.ManifestPreview), c) {
+		return cached.(domain.ManifestPreview), nil
 	}
 	preview := domain.ManifestPreview{AuditHeadDigest: a.Audit.Head(id), AuditRevision: c.Revision, BlockingReasons: []string{}}
 	if c.State != domain.StateQCPassed {
