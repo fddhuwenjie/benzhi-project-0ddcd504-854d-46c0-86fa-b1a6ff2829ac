@@ -14,10 +14,11 @@ import (
 )
 
 type Audit struct {
-	path   string
-	mu     sync.Mutex
-	events map[string][]domain.Event
-	heads  map[string]string
+	path    string
+	mu      sync.Mutex
+	events  map[string][]domain.Event
+	heads   map[string]string
+	corrupt bool
 }
 
 func New(dir string) (*Audit, error) {
@@ -31,15 +32,21 @@ func New(dir string) (*Audit, error) {
 		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		for scanner.Scan() {
 			var ev domain.Event
-			// 损坏行被跳过，后续事件仍会装载到内存链中。
-			// 这使重启后的 Validate 无法感知持久化日志中间的缺口。
+			// 解析失败或截断行不得静默并入内存链：标记持久化缺口，
+			// 使后续 Validate/Page 稳定报告完整性错误，而非把前后
+			// 事件连成一条看似自洽的链。
 			if json.Unmarshal(scanner.Bytes(), &ev) != nil {
+				a.corrupt = true
 				continue
 			}
 			b, _ := json.Marshal(ev)
 			h := sha256.Sum256(append([]byte(a.heads[ev.CaseID]), b...))
 			a.heads[ev.CaseID] = hex.EncodeToString(h[:])
 			a.events[ev.CaseID] = append(a.events[ev.CaseID], ev)
+		}
+		// 扫描层错误（如超长行被截断）同样属于持久化缺口。
+		if scanner.Err() != nil {
+			a.corrupt = true
 		}
 	}
 	return a, nil
@@ -97,6 +104,11 @@ func (a *Audit) Head(id string) string { a.mu.Lock(); defer a.mu.Unlock(); retur
 func (a *Audit) Validate(id string, revision int64) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// 恢复期间探测到持久化缺口（解析失败/截断/扫描错误）时，
+	// 内存链即便自洽也不可信，必须稳定报告完整性错误。
+	if a.corrupt {
+		return false
+	}
 	events := a.events[id]
 	if int64(len(events)) != revision {
 		return false
@@ -262,6 +274,10 @@ func ContinueHead(previous string, events []domain.AuditTrailEvent) string {
 func (a *Audit) Page(id string, afterRevision int64, limit int) (domain.AuditPage, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// 持久化缺口下内存链不可信，校验型查询必须拒绝。
+	if a.corrupt {
+		return domain.AuditPage{}, domain.ErrIntegrity
+	}
 	events := a.events[id]
 	if afterRevision < 0 || afterRevision > int64(len(events)) || limit < 1 || limit > 100 {
 		return domain.AuditPage{}, domain.ErrInvalid
