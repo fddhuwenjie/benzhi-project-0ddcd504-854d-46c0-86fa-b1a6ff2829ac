@@ -15,11 +15,12 @@ import (
 )
 
 type App struct {
-	Store           *store.Store
-	Audit           *audit.Audit
-	locks           sync.Map
-	createMu        sync.Mutex
-	componentProofs map[string]domain.ComponentProof
+	Store             *store.Store
+	Audit             *audit.Audit
+	locks             sync.Map
+	createMu          sync.Mutex
+	componentProofs   map[string]domain.ComponentProof
+	componentProofsMu sync.RWMutex
 }
 
 func New(s *store.Store, a *audit.Audit) *App {

@@ -353,9 +353,12 @@ func (a *App) SealWithDigestRequest(req, id string, rev int64, by, expectedDiges
 
 func (a *App) ComponentProof(id, component string, generation int) (domain.ComponentProof, error) {
 	cacheKey := fmt.Sprintf("%s:%s:%d", id, strings.ToLower(strings.TrimSpace(component)), generation)
+	a.componentProofsMu.RLock()
 	if cached, ok := a.componentProofs[cacheKey]; ok {
+		a.componentProofsMu.RUnlock()
 		return cached, nil
 	}
+	a.componentProofsMu.RUnlock()
 	c, err := a.Store.Get(id)
 	if err != nil {
 		return domain.ComponentProof{}, err
@@ -368,6 +371,13 @@ func (a *App) ComponentProof(id, component string, generation int) (domain.Compo
 	if !proof.Verification["audit_anchor"] && proof.MismatchLevel == "" {
 		proof.MismatchLevel = "audit_anchor"
 	}
+	a.componentProofsMu.Lock()
+	// 另一个并发请求可能已在此期间填入相同键，复用其结果以避免重复写入。
+	if cached, ok := a.componentProofs[cacheKey]; ok {
+		a.componentProofsMu.Unlock()
+		return cached, nil
+	}
 	a.componentProofs[cacheKey] = proof
+	a.componentProofsMu.Unlock()
 	return proof, nil
 }
