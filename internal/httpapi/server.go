@@ -333,13 +333,12 @@ func (s *Server) cases(w http.ResponseWriter, r *http.Request) {
 		out(w, map[string]interface{}{"error": "custody_events 无效", "item_index": index, "field": field}, 400)
 		return
 	}
-	c, e := s.App.CreateWithCustodyRequest(req, x.AccessionCode, x.Title, x.RightsNote, x.CarrierType, x.ContentScope, x.IntakeReceipt, x.CarrierFacets, x.AlternativeIdentifiers, x.CustodyEvents)
-	// 请求可能在应用层提交后才被观察为取消；此处才检查会让调用方收到取消错误，
-	// 但已经写入的个案无法回滚，形成取消请求与持久化状态的不一致。
+	// 在提交任何持久化副作用之前检查请求是否已取消，确保取消的请求不会写入个案或审计事件。
 	if ctxErr := r.Context().Err(); ctxErr != nil {
 		out(w, map[string]string{"error": "请求已取消"}, 499)
 		return
 	}
+	c, e := s.App.CreateWithCustodyRequest(req, x.AccessionCode, x.Title, x.RightsNote, x.CarrierType, x.ContentScope, x.IntakeReceipt, x.CarrierFacets, x.AlternativeIdentifiers, x.CustodyEvents)
 	if e != nil {
 		if errors.Is(e, domain.ErrConflict) {
 			if acc, ne := domain.NormalizeAccession(x.AccessionCode); ne == nil {
