@@ -14,18 +14,17 @@ import (
 )
 
 type Audit struct {
-	path        string
-	mu          sync.Mutex
-	events      map[string][]domain.Event
-	heads       map[string]string
-	inspections map[string]inspectionCacheEntry
+	path   string
+	mu     sync.Mutex
+	events map[string][]domain.Event
+	heads  map[string]string
 }
 
 func New(dir string) (*Audit, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
-	a := &Audit{path: filepath.Join(dir, "audit.jsonl"), events: map[string][]domain.Event{}, heads: map[string]string{}, inspections: map[string]inspectionCacheEntry{}}
+	a := &Audit{path: filepath.Join(dir, "audit.jsonl"), events: map[string][]domain.Event{}, heads: map[string]string{}}
 	if f, e := os.Open(a.path); e == nil {
 		defer f.Close()
 		dec := json.NewDecoder(f)
@@ -76,7 +75,6 @@ func (a *Audit) AppendEvidenceDigestsAt(id, typ string, rev int64, evidenceDiges
 	h := sha256.Sum256(append([]byte(a.heads[id]), b...))
 	a.heads[id] = hex.EncodeToString(h[:])
 	a.events[id] = append(a.events[id], e)
-	delete(a.inspections, id)
 	return nil
 }
 func (a *Audit) FirstAt(id string) time.Time {
@@ -183,20 +181,10 @@ type Inspection struct {
 	Errors             []domain.AuditIntegrityError
 }
 
-type inspectionCacheEntry struct {
-	result   Inspection
-	size     int64
-	modified time.Time
-}
-
 // Inspect 每次从持久化 JSONL 读取事件，确保运行期间的文件删改也能被只读查询发现。
 func (a *Audit) Inspect(id string) (Inspection, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	state, stateErr := os.Stat(a.path)
-	if cached, ok := a.inspections[id]; stateErr == nil && ok && cached.size == state.Size() && cached.modified.Equal(state.ModTime()) {
-		return cloneInspection(cached.result), nil
-	}
 	events, readErrors, err := a.persistedEvents(id)
 	if err != nil {
 		return Inspection{}, err
@@ -225,17 +213,7 @@ func (a *Audit) Inspect(id string) (Inspection, error) {
 	if result.ExpectedHeadDigest != "" && result.ExpectedHeadDigest != previous {
 		result.Errors = append(result.Errors, domain.AuditIntegrityError{Revision: int64(len(events)), Reason: "当前审计链头摘要不匹配", ExpectedDigest: result.ExpectedHeadDigest, ActualDigest: previous})
 	}
-	if stateErr == nil {
-		a.inspections[id] = inspectionCacheEntry{result: cloneInspection(result), size: state.Size(), modified: state.ModTime()}
-	}
 	return result, nil
-}
-
-func cloneInspection(source Inspection) Inspection {
-	b, _ := json.Marshal(source)
-	var cloned Inspection
-	_ = json.Unmarshal(b, &cloned)
-	return cloned
 }
 
 func (a *Audit) persistedEvents(id string) ([]domain.Event, []domain.AuditIntegrityError, error) {
