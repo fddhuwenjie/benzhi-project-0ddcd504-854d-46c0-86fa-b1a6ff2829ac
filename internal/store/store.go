@@ -100,6 +100,7 @@ func (s *Store) Put(c *domain.DigitizationCase) error {
 		return err
 	}
 	s.cases = next
+	s.invalidatePlanConflictCache()
 	return nil
 }
 
@@ -132,6 +133,7 @@ func (s *Store) Commit(c *domain.DigitizationCase, idempotencyKey string, respon
 		return err
 	}
 	s.cases, s.idem = nextCases, nextIdem
+	s.invalidatePlanConflictCache()
 	return nil
 }
 
@@ -170,6 +172,7 @@ func (s *Store) CommitBatch(cases []*domain.DigitizationCase, idempotencyKey str
 		return err
 	}
 	s.cases, s.idem = nextCases, nextIdem
+	s.invalidatePlanConflictCache()
 	return nil
 }
 func (s *Store) Create(c *domain.DigitizationCase) error {
@@ -186,6 +189,7 @@ func (s *Store) Create(c *domain.DigitizationCase) error {
 		return err
 	}
 	s.cases = next
+	s.invalidatePlanConflictCache()
 	return nil
 }
 
@@ -286,6 +290,12 @@ type ResourceConflict struct {
 	Resource     string    `json:"resource"`
 	Start        time.Time `json:"conflict_start"`
 	End          time.Time `json:"conflict_end"`
+}
+
+// invalidatePlanConflictCache 清空预约冲突查询缓存。缓存键不包含被比较的
+// 对端个案，个案数据的任何变更都可能影响既存查询结果，因此写入个案时整体失效。
+func (s *Store) invalidatePlanConflictCache() {
+	s.resourceConflicts = map[string][]ResourceConflict{}
 }
 
 func (s *Store) PlanResourceConflict(caseID string, plan domain.CapturePlan) *ResourceConflict {
