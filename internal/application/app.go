@@ -76,7 +76,7 @@ func (a *App) CreateWithCustodyRequest(requestID, accession, title, rights, carr
 		return nil, e
 	}
 	if e = a.Store.Commit(c, key, entry, true); e != nil {
-		return nil, fmt.Errorf("建档快照提交失败: %v", e)
+		return nil, fmt.Errorf("建档快照提交失败: %w", e)
 	}
 	evidenceDigest := ""
 	evidenceDigests := map[string]string{}

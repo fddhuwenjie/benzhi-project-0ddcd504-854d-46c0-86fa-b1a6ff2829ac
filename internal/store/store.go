@@ -132,7 +132,7 @@ func (s *Store) Commit(c *domain.DigitizationCase, idempotencyKey string, respon
 		nextIdem[idempotencyKey] = append([]byte(nil), response...)
 	}
 	if err := s.saveSnapshot(nextCases, nextIdem); err != nil {
-		return fmt.Errorf("提交原子快照失败: %v", err)
+		return fmt.Errorf("提交原子快照失败: %w", err)
 	}
 	s.cases, s.idem = nextCases, nextIdem
 	return nil
