@@ -709,7 +709,9 @@ func (c *DigitizationCase) DecideQuality(q QualityDecision) error {
 		return Invalid("提交量化指标时 decision 为必填项", map[string]interface{}{"calculated_decision": map[bool]string{true: "PASS", false: "FAIL"}[len(failures) == 0]})
 	}
 	if q.ListeningIntervals != nil {
-		capture := c.Captures[len(c.Captures)-1]
+		if len(c.Captures) == 0 {
+			return Invalid("缺少采集证据，无法复核人工听检覆盖", map[string]interface{}{"generation": q.Generation, "current_capture_generation": c.CurrentCaptureGeneration})
+		}
 		fullCoverage := q.Generation > 1 || (c.Assessment != nil && strings.EqualFold(c.Assessment.PlaybackRisk, "high"))
 		intervals, coverage, coverageDigest, coverageErr := normalizeListeningIntervals(q.ListeningIntervals, duration, channelNames(c.Plan.ChannelMap), fullCoverage, markers)
 		if coverageErr != nil {
@@ -727,7 +729,6 @@ func (c *DigitizationCase) DecideQuality(q QualityDecision) error {
 		} else {
 			q.ListeningIntervals, q.ListeningCoverage, q.ListeningCoverageDigest = intervals, coverage, coverageDigest
 		}
-		_ = capture
 	}
 	if q.Generation > 1 && q.RemediationChecks != nil {
 		authorization, _ := c.activeAuthorization(q.Generation)
