@@ -78,6 +78,18 @@ func (a *App) CreateWithCustodyRequest(requestID, accession, title, rights, carr
 	if e = a.Store.Commit(c, key, entry, true); e != nil {
 		return nil, e
 	}
+	evidenceDigest, evidenceDigests := registrationEvidence(c)
+	if e = a.Audit.AppendEvidenceDigestsAt(c.ID, "REGISTERED", c.Revision, evidenceDigest, evidenceDigests, c.FirstAuditAt); e != nil {
+		return nil, e
+	}
+	return c, nil
+}
+
+// registrationEvidence reconstructs the evidence digest and evidence digests map
+// for a REGISTERED audit event from the persisted case state. Both the initial
+// creation path and the idempotent retry-recovery path use this to ensure the
+// audit event always carries the same evidence anchors and timestamp.
+func registrationEvidence(c *domain.DigitizationCase) (string, map[string]string) {
 	evidenceDigest := ""
 	evidenceDigests := map[string]string{}
 	if c.IntakeReceipt != nil {
@@ -104,10 +116,7 @@ func (a *App) CreateWithCustodyRequest(requestID, accession, title, rights, carr
 			evidenceDigest = c.CustodyChainDigest
 		}
 	}
-	if e = a.Audit.AppendEvidenceDigestsAt(c.ID, "REGISTERED", c.Revision, evidenceDigest, evidenceDigests, c.FirstAuditAt); e != nil {
-		return nil, e
-	}
-	return c, nil
+	return evidenceDigest, evidenceDigests
 }
 func (a *App) mutateWithRequest(requestID, id string, rev int64, payload interface{}, fn func(*domain.DigitizationCase) error, typ string) (*domain.DigitizationCase, error) {
 	u := a.lock(id)
@@ -371,8 +380,11 @@ func (a *App) idempotent(key string, request interface{}) (*domain.DigitizationC
 	}
 	if strings.HasPrefix(key, "create:") && !a.Audit.Validate(saved.Case.ID, saved.Case.Revision) {
 		// 前次调用可能已持久化幂等结果，但审计追加当时不可用；重新建立
-		// 登记边界，使客户端重试无需创建第二个聚合。
-		if err := a.Audit.Append(saved.Case.ID, "REGISTERED", saved.Case.Revision); err != nil {
+		// 登记边界，使客户端重试无需创建第二个聚合。重试必须原样保留
+		// 首次登记时间和接收凭证等证据摘要，且只有完整审计信息持久化
+		// 后才视为成功。
+		evidenceDigest, evidenceDigests := registrationEvidence(&saved.Case)
+		if err := a.Audit.AppendEvidenceDigestsAt(saved.Case.ID, "REGISTERED", saved.Case.Revision, evidenceDigest, evidenceDigests, saved.Case.FirstAuditAt); err != nil {
 			return nil, false, err
 		}
 	}

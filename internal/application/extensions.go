@@ -131,6 +131,20 @@ func (a *App) CreateBatch(requestID, mode string, items []domain.RegistrationIte
 		if entry.RequestDigest != requestDigest {
 			return domain.RegistrationBatchResult{}, domain.ErrConflict
 		}
+		// 前次调用可能已持久化幂等结果，但审计追加当时不可用；重新建立
+		// 登记边界，使客户端重试无需创建第二个聚合。重试必须原样保留
+		// 首次登记时间和接收凭证等证据摘要。
+		for _, r := range entry.Result.Results {
+			if r.Case == nil {
+				continue
+			}
+			if !a.Audit.Validate(r.Case.ID, r.Case.Revision) {
+				evidenceDigest, evidenceDigests := registrationEvidence(r.Case)
+				if err := a.Audit.AppendEvidenceDigestsAt(r.Case.ID, "REGISTERED", r.Case.Revision, evidenceDigest, evidenceDigests, r.Case.FirstAuditAt); err != nil {
+					return domain.RegistrationBatchResult{}, err
+				}
+			}
+		}
 		return entry.Result, nil
 	}
 
@@ -267,26 +281,7 @@ func (a *App) CreateBatch(requestID, mode string, items []domain.RegistrationIte
 		return domain.RegistrationBatchResult{}, err
 	}
 	for _, c := range toCreate {
-		evidenceDigest := c.CarrierFacetsDigest
-		evidenceDigests := map[string]string{}
-		if c.IntakeReceipt != nil {
-			evidenceDigest = c.IntakeReceipt.ReceiptDigest
-		}
-		if c.AlternativeIdentifierDigest != "" {
-			evidenceDigests["alternative_identifiers"] = c.AlternativeIdentifierDigest
-		}
-		if c.CarrierFacetsDigest != "" {
-			evidenceDigests["carrier_facets"] = c.CarrierFacetsDigest
-		}
-		if c.IntakeReceipt != nil {
-			evidenceDigests["intake_receipt"] = c.IntakeReceipt.ReceiptDigest
-		}
-		if c.CustodyChainDigest != "" {
-			evidenceDigests["custody_chain"] = c.CustodyChainDigest
-			if evidenceDigest == "" {
-				evidenceDigest = c.CustodyChainDigest
-			}
-		}
+		evidenceDigest, evidenceDigests := registrationEvidence(c)
 		if err = a.Audit.AppendEvidenceDigestsAt(c.ID, "REGISTERED", c.Revision, evidenceDigest, evidenceDigests, c.FirstAuditAt); err != nil {
 			return domain.RegistrationBatchResult{}, err
 		}
