@@ -359,14 +359,18 @@ func (c *DigitizationCase) applyAdjudication(q QualityDecision) error {
 		}
 	}
 	now := time.Now().UTC()
+	resolutions := make(map[string]string, len(q.DisagreementResolutions))
+	for item, value := range q.DisagreementResolutions {
+		resolutions[item] = value
+	}
 	failures := []string{}
 	if decision == "FAIL" {
-		for item := range q.DisagreementResolutions {
+		for item := range resolutions {
 			failures = append(failures, strings.ToLower(strings.TrimSpace(item)))
 		}
 		sort.Strings(failures)
 	}
-	primary.Adjudication = &QualityAdjudication{AdjudicationForRevision: q.AdjudicationForRevision, CountersignForRevision: q.CountersignForRevision, Adjudicator: by, Decision: decision, ListeningNotes: notes, ConfirmedEvidenceDigest: digest, DisagreementResolutions: q.DisagreementResolutions, AdjudicatedAt: now, FailureCategories: failures}
+	primary.Adjudication = &QualityAdjudication{AdjudicationForRevision: q.AdjudicationForRevision, CountersignForRevision: q.CountersignForRevision, Adjudicator: by, Decision: decision, ListeningNotes: notes, ConfirmedEvidenceDigest: digest, DisagreementResolutions: resolutions, AdjudicatedAt: now, FailureCategories: failures}
 	primary.CountersignStatus = "ADJUDICATED"
 	if decision == "PASS" {
 		c.State = StateQCPassed
