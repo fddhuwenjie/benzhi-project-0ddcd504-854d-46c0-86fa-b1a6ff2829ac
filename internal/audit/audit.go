@@ -14,11 +14,10 @@ import (
 )
 
 type Audit struct {
-	path       string
-	appendFile *os.File
-	mu         sync.Mutex
-	events     map[string][]domain.Event
-	heads      map[string]string
+	path   string
+	mu     sync.Mutex
+	events map[string][]domain.Event
+	heads  map[string]string
 }
 
 func New(dir string) (*Audit, error) {
@@ -30,7 +29,7 @@ func New(dir string) (*Audit, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Audit{path: path, appendFile: f, events: map[string][]domain.Event{}, heads: map[string]string{}}
+	a := &Audit{path: path, events: map[string][]domain.Event{}, heads: map[string]string{}}
 	dec := json.NewDecoder(f)
 	for {
 		var ev domain.Event
@@ -42,6 +41,7 @@ func New(dir string) (*Audit, error) {
 		a.heads[ev.CaseID] = hex.EncodeToString(h[:])
 		a.events[ev.CaseID] = append(a.events[ev.CaseID], ev)
 	}
+	_ = f.Close()
 	return a, nil
 }
 func (a *Audit) Append(id, typ string, rev int64) error {
@@ -64,8 +64,18 @@ func (a *Audit) AppendEvidenceDigestsAt(id, typ string, rev int64, evidenceDiges
 	defer a.mu.Unlock()
 	e := domain.Event{CaseID: id, Type: typ, Revision: rev, At: at.UTC(), EvidenceDigest: evidenceDigest, EvidenceDigests: evidenceDigests}
 	b, _ := json.Marshal(e)
-	if _, er := a.appendFile.Write(append(b, '\n')); er != nil {
+	// 每次写入都打开当前路径的文件，确保日志工具重命名并新建空文件后
+	// 事件仍写入当前 audit.jsonl，而非已被替换的旧文件句柄。
+	f, er := os.OpenFile(a.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if er != nil {
 		return er
+	}
+	if _, wErr := f.Write(append(b, '\n')); wErr != nil {
+		_ = f.Close()
+		return wErr
+	}
+	if cErr := f.Close(); cErr != nil {
+		return cErr
 	}
 	h := sha256.Sum256(append([]byte(a.heads[id]), b...))
 	a.heads[id] = hex.EncodeToString(h[:])
