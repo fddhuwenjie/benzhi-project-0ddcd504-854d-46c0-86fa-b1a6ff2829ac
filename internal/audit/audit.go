@@ -59,7 +59,7 @@ func (a *Audit) AppendEvidenceDigests(id, typ string, rev int64, evidenceDigest 
 func (a *Audit) AppendEvidenceDigestsAt(id, typ string, rev int64, evidenceDigest string, evidenceDigests map[string]string, at time.Time) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	e := domain.Event{CaseID: id, Type: typ, Revision: rev, At: at.UTC(), EvidenceDigest: evidenceDigest, EvidenceDigests: evidenceDigests}
+	e := domain.Event{CaseID: id, Type: typ, Revision: rev, At: at.UTC(), EvidenceDigest: evidenceDigest, EvidenceDigests: copyDigests(evidenceDigests)}
 	b, _ := json.Marshal(e)
 	f, er := os.OpenFile(a.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if er != nil {
@@ -88,7 +88,16 @@ func (a *Audit) FirstAt(id string) time.Time {
 func (a *Audit) Events(id string) []domain.Event {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.events[id]
+	source := a.events[id]
+	if len(source) == 0 {
+		return nil
+	}
+	result := make([]domain.Event, len(source))
+	for i, event := range source {
+		result[i] = event
+		result[i].EvidenceDigests = copyDigests(event.EvidenceDigests)
+	}
+	return result
 }
 func (a *Audit) Head(id string) string { a.mu.Lock(); defer a.mu.Unlock(); return a.heads[id] }
 func (a *Audit) Validate(id string, revision int64) bool {
@@ -181,6 +190,17 @@ type Inspection struct {
 	Errors             []domain.AuditIntegrityError
 }
 
+func copyDigests(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]string, len(source))
+	for k, v := range source {
+		result[k] = v
+	}
+	return result
+}
+
 // Inspect 每次从持久化 JSONL 读取事件，确保运行期间的文件删改也能被只读查询发现。
 func (a *Audit) Inspect(id string) (Inspection, error) {
 	a.mu.Lock()
@@ -206,7 +226,7 @@ func (a *Audit) Inspect(id string) (Inspection, error) {
 			result.Errors = append(result.Errors, domain.AuditIntegrityError{Revision: event.Revision, Reason: "审计事件状态转换不连续"})
 		}
 		current := eventDigest(previous, event)
-		result.Events = append(result.Events, domain.AuditTrailEvent{CaseID: event.CaseID, Revision: event.Revision, Type: event.Type, At: event.At, EvidenceDigest: event.EvidenceDigest, EvidenceDigests: event.EvidenceDigests, PreviousDigest: previous, EventDigest: current})
+		result.Events = append(result.Events, domain.AuditTrailEvent{CaseID: event.CaseID, Revision: event.Revision, Type: event.Type, At: event.At, EvidenceDigest: event.EvidenceDigest, EvidenceDigests: copyDigests(event.EvidenceDigests), PreviousDigest: previous, EventDigest: current})
 		previous = current
 	}
 	result.CurrentHeadDigest = previous
@@ -250,7 +270,7 @@ func (a *Audit) persistedEvents(id string) ([]domain.Event, []domain.AuditIntegr
 // ContinueHead 从可信前序摘要继续计算返回事件的链头。
 func ContinueHead(previous string, events []domain.AuditTrailEvent) string {
 	for _, event := range events {
-		previous = eventDigest(previous, domain.Event{CaseID: event.CaseID, Revision: event.Revision, Type: event.Type, At: event.At, EvidenceDigest: event.EvidenceDigest, EvidenceDigests: event.EvidenceDigests})
+		previous = eventDigest(previous, domain.Event{CaseID: event.CaseID, Revision: event.Revision, Type: event.Type, At: event.At, EvidenceDigest: event.EvidenceDigest, EvidenceDigests: copyDigests(event.EvidenceDigests)})
 	}
 	return previous
 }
@@ -270,7 +290,7 @@ func (a *Audit) Page(id string, afterRevision int64, limit int) (domain.AuditPag
 			return domain.AuditPage{}, domain.ErrIntegrity
 		}
 		current := eventDigest(previous, event)
-		trail[i] = domain.AuditTrailEvent{CaseID: event.CaseID, Revision: event.Revision, Type: event.Type, At: event.At, EvidenceDigest: event.EvidenceDigest, EvidenceDigests: event.EvidenceDigests, PreviousDigest: previous, EventDigest: current}
+		trail[i] = domain.AuditTrailEvent{CaseID: event.CaseID, Revision: event.Revision, Type: event.Type, At: event.At, EvidenceDigest: event.EvidenceDigest, EvidenceDigests: copyDigests(event.EvidenceDigests), PreviousDigest: previous, EventDigest: current}
 		previous = current
 	}
 	if previous != a.heads[id] {
