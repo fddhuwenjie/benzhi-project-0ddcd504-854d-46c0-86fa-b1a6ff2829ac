@@ -23,6 +23,11 @@ func (a *App) CustodyChain(id string, fromTime, toTime *time.Time, limit int, in
 	if limit < 0 || limit > 100 || (fromTime != nil && toTime != nil && toTime.Before(*fromTime)) {
 		return domain.CustodyChainResult{}, domain.ErrInvalid
 	}
+	// Hold the per-case mutation lock so a concurrent transfer cannot commit a
+	// new chain and repopulate the cache with stale data between the cache miss
+	// and the store read.
+	unlock := a.lock(id)
+	defer unlock()
 	key := custodyChainCacheKey{caseID: id, limit: limit, includeEvents: includeEvents}
 	if fromTime != nil {
 		key.fromTime = fromTime.UTC().Format(time.RFC3339Nano)
@@ -128,6 +133,20 @@ func cloneCustodyChainResult(source domain.CustodyChainResult) domain.CustodyCha
 	cloned.Events = append([]domain.CustodyEvent(nil), source.Events...)
 	cloned.Errors = append([]string(nil), source.Errors...)
 	return cloned
+}
+
+// invalidateCustodyCache drops every cached custody-chain projection for the
+// given case. It must be called after any mutation that changes the persisted
+// case state or appends an audit event, because CustodyChain caches the audit
+// head digest alongside the custody events, custodian, location and digest.
+func (a *App) invalidateCustodyCache(id string) {
+	a.custodyMu.Lock()
+	defer a.custodyMu.Unlock()
+	for key := range a.custodyChains {
+		if key.caseID == id {
+			delete(a.custodyChains, key)
+		}
+	}
 }
 
 type batchIdempotencyEntry struct {
@@ -321,6 +340,7 @@ func (a *App) CreateBatch(requestID, mode string, items []domain.RegistrationIte
 		if err = a.Audit.AppendEvidenceDigestsAt(c.ID, "REGISTERED", c.Revision, evidenceDigest, evidenceDigests, c.FirstAuditAt); err != nil {
 			return domain.RegistrationBatchResult{}, err
 		}
+		a.invalidateCustodyCache(c.ID)
 	}
 	return result, nil
 }

@@ -111,6 +111,7 @@ func (a *App) CreateWithCustodyRequest(requestID, accession, title, rights, carr
 	if e = a.Audit.AppendEvidenceDigestsAt(c.ID, "REGISTERED", c.Revision, evidenceDigest, evidenceDigests, c.FirstAuditAt); e != nil {
 		return nil, e
 	}
+	a.invalidateCustodyCache(c.ID)
 	return c, nil
 }
 func (a *App) mutateWithRequest(requestID, id string, rev int64, payload interface{}, fn func(*domain.DigitizationCase) error, typ string) (*domain.DigitizationCase, error) {
@@ -148,6 +149,7 @@ func (a *App) mutateWithRequest(requestID, id string, rev int64, payload interfa
 	if e = a.Audit.AppendEvidenceDigests(id, typ, c.Revision, evidenceDigest, mutationEvidenceDigests(c, typ)); e != nil {
 		return nil, e
 	}
+	a.invalidateCustodyCache(id)
 	return c, nil
 }
 func (a *App) AssessWithRequest(req, id string, rev int64, x domain.ConditionAssessment) (*domain.DigitizationCase, error) {
@@ -202,6 +204,7 @@ func (a *App) PlanWithRequest(req, id string, rev int64, x domain.CapturePlan) (
 	if err = a.Audit.AppendEvidenceDigests(id, typ, c.Revision, evidenceDigest, mutationEvidenceDigests(c, typ)); err != nil {
 		return nil, err
 	}
+	a.invalidateCustodyCache(id)
 	return c, nil
 }
 
@@ -251,6 +254,7 @@ func (a *App) ReleaseReservationWithRequest(req, id string, rev int64, releasedB
 	if err = a.Audit.AppendEvidenceDigests(id, "PLAN_RESERVATION_RELEASED", c.Revision, evidence, auditDetails); err != nil {
 		return nil, err
 	}
+	a.invalidateCustodyCache(id)
 	return c, nil
 }
 func (a *App) CaptureWithRequest(req, id string, rev int64, x domain.CaptureGeneration) (*domain.DigitizationCase, error) {
@@ -397,6 +401,7 @@ func (a *App) mutateLocked(id string, rev int64, fn func(*domain.DigitizationCas
 	if e = a.Audit.AppendEvidenceDigests(id, typ, c.Revision, mutationEvidenceDigest(c, typ, nil), mutationEvidenceDigests(c, typ)); e != nil {
 		return nil, e
 	}
+	a.invalidateCustodyCache(id)
 	return c, nil
 }
 
