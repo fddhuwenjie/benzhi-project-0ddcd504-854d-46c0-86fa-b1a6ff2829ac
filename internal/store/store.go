@@ -27,6 +27,29 @@ func New(dir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{dir: dir, cases: map[string]*domain.DigitizationCase{}, idem: map[string][]byte{}}
+	// An interrupted saveSnapshot writes snapshot.tmp first, then renames it
+	// to snapshot.json. If both files exist after a crash, snapshot.tmp is
+	// the newer complete snapshot (cases + idempotency together). Promote it
+	// to snapshot.json so the committed aggregate is consistent on restart,
+	// avoiding any mix of case data from one snapshot with idempotency
+	// receipts from another.
+	if b, err := os.ReadFile(filepath.Join(dir, "snapshot.tmp")); err == nil {
+		var pending snapshot
+		if json.Unmarshal(b, &pending) == nil {
+			if pending.Cases == nil {
+				pending.Cases = map[string]*domain.DigitizationCase{}
+			}
+			if pending.Idempotency == nil {
+				pending.Idempotency = map[string][]byte{}
+			}
+			if renameErr := os.Rename(filepath.Join(dir, "snapshot.tmp"), filepath.Join(dir, "snapshot.json")); renameErr != nil {
+				return nil, renameErr
+			}
+			s.cases = pending.Cases
+			s.idem = pending.Idempotency
+			return s, nil
+		}
+	}
 	if b, e := os.ReadFile(filepath.Join(dir, "snapshot.json")); e == nil {
 		var saved snapshot
 		if json.Unmarshal(b, &saved) == nil {
@@ -43,18 +66,6 @@ func New(dir string) (*Store, error) {
 		}
 		if b, readErr := os.ReadFile(filepath.Join(dir, "idempotency.json")); readErr == nil {
 			_ = json.Unmarshal(b, &s.idem)
-		}
-	}
-	// Preserve retry receipts that may only exist in an interrupted temporary
-	// snapshot. The committed aggregate remains authoritative for case data.
-	if b, err := os.ReadFile(filepath.Join(dir, "snapshot.tmp")); err == nil {
-		var pending snapshot
-		if json.Unmarshal(b, &pending) == nil {
-			for key, value := range pending.Idempotency {
-				if _, exists := s.idem[key]; !exists {
-					s.idem[key] = append([]byte(nil), value...)
-				}
-			}
 		}
 	}
 	return s, nil
